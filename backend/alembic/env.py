@@ -11,11 +11,12 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+import app.models  # noqa: F401  (registers every mapper on Base.metadata)
 from app.core.config import get_settings
 from app.db.base import Base
 
-# Model modules are imported here so Base.metadata is populated for
-# autogenerate. Imports are added as the milestones introduce models.
+# app.models is imported above so Base.metadata is fully populated for
+# autogenerate. New model modules are added to that package's __init__.
 target_metadata = Base.metadata
 
 config = context.config

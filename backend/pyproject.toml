@@ -52,6 +52,12 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
+[tool.ruff.lint.isort]
+# The local `alembic/` migrations directory makes ruff infer that
+# `alembic` is first-party. It is not: it is the third-party package,
+# and that directory is a script location, not an importable package.
+known-third-party = ["alembic"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true
