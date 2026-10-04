@@ -1,0 +1,117 @@
+# CareerLens — local development stack.
+#
+# Sized for the minimum deployment target (2 vCPU / 4 GB RAM).
+# See docs/SYSTEM-REQUIREMENTS.md Section 3.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    # Conservative tuning for a 4 GB host.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - max_connections=50
+      - -c
+      - work_mem=8MB
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Separate database for integration tests. Tests run against real
+  # PostgreSQL because constraint behaviour is part of the specification.
+  postgres_test:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}_test
+    command: ["postgres", "-c", "fsync=off", "-c", "shared_buffers=128MB"]
+    tmpfs:
+      - /var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    profiles: ["test"]
+
+  redis:
+    image: redis:7-alpine
+    # Redis holds queue transport, caches and locks only. It is never
+    # durable application state, so eviction under pressure is acceptable.
+    command:
+      - redis-server
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-192mb}
+      - --maxmemory-policy
+      - allkeys-lru
+      - --save
+      - ""
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ./backend
+    env_file: [.env]
+    environment:
+      CAREERLENS_ROLE: api
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Same image as the API, different entrypoint. One worker process only
+  # on the minimum target.
+  worker:
+    build:
+      context: ./backend
+    env_file: [.env]
+    environment:
+      CAREERLENS_ROLE: worker
+    command: ["python", "-m", "app.worker.main"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    volumes:
+      - ./backend:/app
+
+  nginx:
+    build:
+      context: ./frontend
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  postgres_data:
