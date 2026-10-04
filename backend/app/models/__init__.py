@@ -12,6 +12,12 @@ from app.models.catalog import (
     SkillRelationship,
     SkillRepresentation,
 )
+from app.models.profile import (
+    MatchingCriteria,
+    ProfileSkill,
+    ProfileVersion,
+    UserProfile,
+)
 from app.models.seniority import (
     SeniorityLevel,
     SeniorityRelationship,
@@ -20,6 +26,9 @@ from app.models.seniority import (
 
 __all__ = [
     "CatalogVersion",
+    "MatchingCriteria",
+    "ProfileSkill",
+    "ProfileVersion",
     "SeniorityLevel",
     "SeniorityRelationship",
     "SeniorityRepresentation",
@@ -28,4 +37,5 @@ __all__ = [
     "SkillPromotionEvidence",
     "SkillRelationship",
     "SkillRepresentation",
+    "UserProfile",
 ]

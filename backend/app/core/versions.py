@@ -17,7 +17,10 @@ from typing import Final
 # changes: resolution rules, normalization, Stage 2 comparison, or
 # Stage 4 arithmetic. Never auto-derived — a stale value silently breaks
 # the Stage 2 re-executability guarantee.
-RULE_VERSION: Final[str] = "r1"
+# r2: profile snapshot construction became identity-first, with an
+#     explicit same-kind merge policy (strongest proficiency, required
+#     over optional, higher weight) replacing last-write-wins.
+RULE_VERSION: Final[str] = "r2"
 
 # Identifies the model used by Stage 1 extraction and Stage 3 semantic
 # analysis. "none" while no provider is configured; Stage 3 results are
@@ -28,6 +31,14 @@ MODEL_VERSION_NONE: Final[str] = "none"
 # runtime once the catalog exists (Milestone 2); this constant is the
 # bootstrap value for an empty catalog.
 CATALOG_VERSION_EMPTY: Final[str] = "c0"
+
+# Structure version of the ProfileVersion snapshot document, bumped when
+# the snapshot's SHAPE changes so an older document stays readable under
+# today's code. Deliberately NOT a fifth version axis: it describes the
+# container, not the matching inputs.
+# ps2: added preferred_locations and preferred_work_modes, the Stage 2
+#      location and work-mode inputs.
+PROFILE_SNAPSHOT_SCHEMA_VERSION: Final[str] = "ps2"
 
 
 def describe() -> dict[str, str]:

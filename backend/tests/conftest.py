@@ -10,6 +10,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+import redis
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
@@ -17,6 +18,7 @@ from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.locking import build_lock_client
 from app.main import create_app
 
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
@@ -97,3 +99,21 @@ def db_session(migrated_engine: Engine) -> Iterator[Session]:
         session.close()
         transaction.rollback()
         connection.close()
+
+
+@pytest.fixture(scope="session")
+def redis_client() -> Iterator[redis.Redis]:
+    """A real Redis client for lock tests.
+
+    Locks are a distributed primitive: a fake would verify only that the
+    code calls the methods it calls, not that SET NX PX and the release
+    script actually exclude a second holder. The test database is real
+    for the same reason.
+    """
+    client = build_lock_client(get_settings().redis_url.get_secret_value())
+    try:
+        client.ping()
+    except Exception as exc:  # pragma: no cover
+        pytest.skip(f"Redis unavailable: {exc}")
+    yield client
+    client.close()

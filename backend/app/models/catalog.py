@@ -42,6 +42,43 @@ def enum_check(column: str, enum: type[StrEnum]) -> str:
     return f"{column} IN ({values})"
 
 
+def nullable_enum_check(column: str, enum: type[StrEnum]) -> str:
+    """As `enum_check`, but permitting NULL for an optional column."""
+    return f"{column} IS NULL OR {enum_check(column, enum)}"
+
+
+def identity_coherence_check(
+    status_column: str, *identity_columns: str, allow_unset: bool = False
+) -> str:
+    """Render a CHECK tying "resolved" to actually carrying an identity.
+
+    Two contradictions are rejected by one expression, because they are
+    the same mistake seen from opposite sides:
+
+      - status 'resolved' with a missing identity, which would let
+        matching treat a mention as pinned to a catalog entry it never
+        reached;
+      - an identity present while the status says unresolved or
+        indeterminate, which asserts a resolution the pipeline never
+        made. `indeterminate` especially must not quietly carry one: it
+        exists precisely to say evidence was found but could not be
+        pinned to a single entry.
+
+    `allow_unset` is for column groups that may be absent wholesale — an
+    optional seniority reference where every column including the status
+    is NULL. Absence is not a contradiction; it is simply no claim.
+    """
+    present = " AND ".join(f"{column} IS NOT NULL" for column in identity_columns)
+    absent = " AND ".join(f"{column} IS NULL" for column in identity_columns)
+    coherent = (
+        f"({status_column} = 'resolved' AND {present}) "
+        f"OR ({status_column} <> 'resolved' AND {absent})"
+    )
+    if allow_unset:
+        return f"({status_column} IS NULL AND {absent}) OR ({coherent})"
+    return coherent
+
+
 # Shared CHECK for every effective-versioned table.
 VALIDITY_RANGE_CHECK = "valid_to_version IS NULL OR valid_to_version > valid_from_version"
 

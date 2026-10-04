@@ -11,23 +11,29 @@ catalog promotion (AI-MATCHING.md Section 4).
 
 import uuid
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import Protocol
 
 from app.domain.normalization import is_valid_representation, normalize
-from app.models.enums import RepresentationKind, RepresentationOrigin
+from app.models.enums import (
+    RepresentationKind,
+    RepresentationOrigin,
+    ResolutionProvenance,
+    ResolutionStatus,
+)
 
-
-class ResolutionProvenance(StrEnum):
-    """How a resolution was established. Exactly six tiers, no seventh."""
-
-    EXACT_MATCH = "exact_match"
-    NORMALIZED = "normalized"
-    ALIAS_RULE = "alias_rule"
-    USER_CONFIRMED = "user_confirmed"
-    AI_SEMANTIC = "ai_semantic"
-    UNRESOLVED = "unresolved"
-
+# Re-exported so callers can keep importing the resolution vocabulary
+# from the domain module that uses it. The definitions live in
+# app.models.enums because the database CHECK constraints need them too,
+# and that module depends on nothing else in the application.
+__all__ = [
+    "DETERMINISTIC_PROVENANCE",
+    "RepresentationLookup",
+    "RepresentationRecord",
+    "ResolutionProvenance",
+    "ResolutionStatus",
+    "SkillResolution",
+    "resolve_skill",
+]
 
 DETERMINISTIC_PROVENANCE: frozenset[ResolutionProvenance] = frozenset(
     {
@@ -37,21 +43,6 @@ DETERMINISTIC_PROVENANCE: frozenset[ResolutionProvenance] = frozenset(
         ResolutionProvenance.USER_CONFIRMED,
     }
 )
-
-
-class ResolutionStatus(StrEnum):
-    """Outcome of a resolution attempt.
-
-    `INDETERMINATE` is distinct from `UNRESOLVED`: indeterminate means
-    evidence exists but could not be pinned to one entry (for example an
-    open conflict, or a known-ambiguous title), whereas unresolved means
-    no mapping was found at all. Conflating them would let an
-    uncertainty masquerade as an absence.
-    """
-
-    RESOLVED = "resolved"
-    UNRESOLVED = "unresolved"
-    INDETERMINATE = "indeterminate"
 
 
 @dataclass(frozen=True, slots=True)

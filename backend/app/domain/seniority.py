@@ -14,23 +14,29 @@ from typing import Final, Protocol
 
 from app.domain.normalization import is_valid_representation, normalize
 from app.domain.resolution import ResolutionProvenance, ResolutionStatus
-from app.models.enums import RepresentationKind, RepresentationOrigin, SeniorityTrack
+from app.models.enums import (
+    EvidenceSource,
+    RepresentationKind,
+    RepresentationOrigin,
+    SeniorityTrack,
+)
 
-
-class EvidenceSource(StrEnum):
-    """WHERE the seniority text came from.
-
-    Orthogonal to provenance, which says HOW it resolved. A structured
-    field and a phrase scraped from a description can both resolve via
-    `exact_match` while carrying very different authority, so the two
-    must never be merged.
-    """
-
-    STRUCTURED_FIELD = "structured_field"
-    TITLE = "title"
-    REQUIREMENTS = "requirements"
-    RESPONSIBILITIES = "responsibilities"
-    DESCRIPTION = "description"
+# Re-exported for the same reason as the resolution vocabulary: the
+# definition lives in app.models.enums so database CHECK constraints can
+# use it without importing the domain.
+__all__ = [
+    "AMBIGUOUS_SENIORITY_TERMS",
+    "NON_SENIORITY_ROLE_TERMS",
+    "EvidenceSource",
+    "SeniorityComparisonOutcome",
+    "SeniorityLevelRecord",
+    "SeniorityLookup",
+    "SeniorityRepresentationRecord",
+    "SeniorityResolution",
+    "compare_levels",
+    "compare_seniority",
+    "resolve_seniority",
+]
 
 
 class SeniorityComparisonOutcome(StrEnum):

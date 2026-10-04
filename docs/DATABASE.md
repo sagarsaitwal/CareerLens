@@ -390,10 +390,53 @@ calculation:
   raw_text, normalized_representation, resolved_canonical_name **by
   value**, skill_id (provenance pointer only), resolution_status,
   resolution_provenance, proficiency (absent for intent-only), weight and
-  intent (absent for capability-only)
+  intent (absent for capability-only). Identity is the key where one
+  exists, so a capability and an intent naming the same skill by
+  different text ("Kubernetes" and "K8s") form one entry, while two
+  mentions resolving to **different** skills never merge. Normalized
+  text remains a fallback key only for mentions that have no identity
+  yet, since resolution can reach capability and intent at different
+  times.
+
+  When **several mentions of the same kind** collapse into one entry —
+  possible because the live tables are unique on
+  `(profile, normalized_representation)` and not on identity — the
+  surviving value is chosen by rule, never by row order:
+
+  - **proficiency**: the **strongest** capability wins
+    (Strong > Working > Learning). A duplicate must not be able to
+    understate what the user can do.
+  - **weight and is_required**: **required dominates optional**, then
+    **higher weight dominates lower**. A duplicate must not be able to
+    weaken a requirement the user expressed.
+  - **raw_text, normalized_representation, provenance**: taken from an
+    elected representative — **resolved** mentions first, then the row
+    that supplied the winning proficiency (or, with no capability, the
+    winning weight), then the lexicographically smallest text. The
+    schema carries one of each per entry, so a representative is
+    required; the identity itself is shared across the group, so
+    nothing load-bearing is lost.
+
+    The middle rule is **co-origination**: `raw_text` is evidence of how
+    the user expressed the skill, so the entry's text and its surviving
+    proficiency must describe one real row. Reporting "K8s" beside a
+    Strong that came from the "Kubernetes" row would attribute a claim
+    to a row that never made it. Co-origination can hold for only one
+    axis, since capability and intent are different tables; the
+    capability is preferred as the more concrete evidence claim. It also
+    yields to rule one — an entry must never report `unresolved` while
+    carrying the identity it is keyed on, which is the contradiction
+    `resolved_requires_identity` forbids at row level.
+
+  Every rule is a total order with a deterministic tie-break, so the
+  snapshot is byte-identical regardless of the order rows are read in
 - experience
 - current_seniority and target_seniority — full seniority references,
   with level name **and track by value**
+- preferred_locations and preferred_work_modes, in the order the user
+  entered them. Stage 2 compares location and work mode, so these are
+  matching inputs: left out, a historical match could not be
+  re-executed without silently adopting today's preferences
 - the **frozen seniority ladder** entries referenced by the snapshot
 - the vocabularies in force (ordered proficiency levels)
 
