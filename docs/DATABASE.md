@@ -39,7 +39,10 @@ UserProfile 1───* Application
 
 ProfileVersion 1───* MatchResult
 
-JobSource 1───* JobPosting
+JobSource 1───* JobPostingSource
+JobPosting 1───* JobPostingSource    [one job, many places it was seen]
+JobPosting 1───* JobSkillMention     [required | preferred | mentioned |
+                                      responsibility]
 JobPosting 1───* MatchResult
 JobPosting 1───* UserJobDecisionEvent
 JobPosting 1───* Application
@@ -59,10 +62,17 @@ Application 1───* Note
 Notification *───1 (Application | JobPosting)   [polymorphic reference]
 ```
 
-`ProfileSkill`, `MatchingCriteria` and `JobPosting`'s extracted skills
-carry a [skill mention](#29-mention-and-reference-patterns);
-`UserProfile` and `JobPosting` seniority fields carry a
+`ProfileSkill`, `MatchingCriteria` and `JobSkillMention` carry a
+[skill mention](#29-mention-and-reference-patterns); `UserProfile` and
+`JobPosting` seniority fields carry a
 [seniority reference](#29-mention-and-reference-patterns).
+
+> **A job and where it was found are different things.** `JobPosting`
+> holds the canonical job; `JobPostingSource` holds one source's identity
+> for it and that source's observation window. The same role listed on
+> three boards is **one** `JobPosting` with three `JobPostingSource` rows,
+> which is what makes "deduplicated across sources" representable rather
+> than merely asserted.
 
 See [Section 3.3](#33-data-separation-canonical-vs-user-specific-data) for
 the canonical/user-specific split, [Section 3.4](#34-capability-vs-intent-fit-vs-preference)
@@ -509,15 +519,19 @@ Unrelated profile metadata — a display label, cosmetic fields — must
 Canonical, source-of-truth job information, deduplicated across sources.
 Not user-specific.
 
+**Carries no source identity.** `job_source_id`, `source_job_id` and
+`source_url` live on [`JobPostingSource`](#2151-jobpostingsource), because
+one canonical job may be discovered in several places.
+
 **Core identity**
-- id, job_source_id (FK → JobSource), source_job_id, title, company
+- id, title, company
 
 **Content**
 - description_raw — **untrusted external input** (see
   [AI-MATCHING.md](AI-MATCHING.md#10-ai-safety-and-bounded-behaviour))
 
 **URLs**
-- source_url, official_url
+- official_url
 - direct_apply_url (nullable — never fabricated)
 - direct_apply_verification_status (verified / unverified / not_available)
 
@@ -526,23 +540,144 @@ Not user-specific.
 - seniority — a [seniority reference](#29-mention-and-reference-patterns)
   representing **what the posting evidences or requests**, never a guess
   about the company's hierarchy
-- experience_requirements
+- experience_requirements — **the source's wording, stored as text**
 - salary_min / salary_max / salary_currency (nullable)
 
 **Lifecycle**
-- posting_date, first_seen_at, last_seen_at, last_updated_at
+- posting_date, last_updated_at
+- first_seen_at / last_seen_at — **derived** from the associated
+  `JobPostingSource` rows: earliest `first_seen_at` and latest
+  `last_seen_at` across them. They are observations of a job, not
+  properties of it, and a job can be fresh on one board while stale on
+  another. Should either ever be materialized on this row for query
+  convenience, it must equal that aggregate
 - status (active / closed / unknown)
-- dedupe_key / fingerprint
+- dedupe_key, fingerprint — two **distinct** keys; see below
 - extraction_status (complete / partial) — a partial extraction must
   **never** be read as "no further requirements exist"
 
-**Extracted requirements** (Stage 1; each a
-[skill mention](#29-mention-and-reference-patterns)):
-- required_skills, preferred_skills, mentioned_skills, responsibilities
+**Extracted requirements** — see
+[`JobSkillMention`](#2152-jobskillmention).
+
+> **`experience_requirements` is not parsed.** AI-MATCHING.md requires an
+> *experience range fit* check at Stage 2 but specifies no structure for
+> it — no unit, no inclusivity rule, no representation for "5+ years" or
+> for text that does not parse. The source's wording is therefore stored
+> verbatim and nothing is inferred from it. A comparable structure is
+> deferred to the milestone that implements that check. Per-skill
+> experience remains separately deferred
+> ([Section 7](#7-explicitly-deferred)).
+
+> **`employment_type` vocabulary:** `full_time`, `part_time`, `contract`,
+> `temporary`, `internship`, `unknown`. A source value that does not map
+> to one of these becomes **`unknown`**. It is never guessed into the
+> nearest member — coercion would invent a fact the posting never stated.
+
+#### Identity and content state: `dedupe_key` vs `fingerprint`
+
+These answer different questions and must never be collapsed into one
+field. Collapsing them would make an edited repost either a duplicate
+that hides the edit, or a new job that double-counts promotion evidence.
+
+| Key | Question | Changes when |
+|---|---|---|
+| `dedupe_key` | **Which** job is this? | The job is a different job |
+| `fingerprint` | **What** does it currently say? | Matching-relevant content changes |
+
+**`dedupe_key` is derived from the normalized values of exactly three
+fields:**
+
+- company
+- title
+- location
+
+Everything else is **excluded by decision**: work mode, employment type,
+`description_raw`, salary, experience, seniority, all URLs, and all
+source identity. Description is the load-bearing exclusion — a company
+reposting the same role with reworded copy is one job, and
+[AI-MATCHING.md Section 8](AI-MATCHING.md#8-catalog-promotion-and-the-determinism-ratchet)
+requires promotion evidence to count *independent* postings, which fails
+if an edit mints a new identity. Location is included because the same
+title at the same company in two cities is two jobs a user may feel
+differently about.
+
+**`fingerprint` is derived from the normalized values of:**
+
+- title, company, location
+- work_mode, employment_type
+- seniority
+- experience_requirements
+- description_raw
+- official_url, direct_apply_url
+
+**Observation timestamps are excluded** from the fingerprint: they change
+on every crawl without the posting having changed, so including them
+would report an edit on every re-ingest and defeat idempotency.
+
+Both derivations are **deterministic and versioned**. The version tag is
+part of the derivation, so a key computed under old rules can never
+compare equal to one computed under new rules — an old key stops
+matching, which is the safe failure, rather than silently colliding.
+
+Normalization for both keys uses the same mechanical rules that govern
+skill identity, so one `rule_version` covers both.
+
+#### 2.15.1 `JobPostingSource`
+
+One source's identity for, and observation of, a canonical job.
+
+- id
+- job_posting_id (FK → JobPosting)
+- job_source_id (FK → JobSource)
+- source_job_id — the source's own identifier for the posting
+- source_url — where it was discovered
+- first_seen_at, last_seen_at
+
+> **`UNIQUE (job_source_id, source_job_id)`** — re-crawling a source
+> cannot create a second row for the same external posting.
+> **`UNIQUE (job_posting_id, job_source_id)`** — one source lists a given
+> canonical job once. Together with `UNIQUE (dedupe_key)` on
+> `JobPosting`, these are what
+> [Section 4.3](#43-idempotency-requirements) means by "re-ingesting
+> creates no duplicates".
+
+> `first_seen_at` is a fact about the past and never moves forward; only
+> `last_seen_at` advances on re-observation.
+
+#### 2.15.2 `JobSkillMention`
+
+The posting's extracted skills. **One table**, discriminated by
+`mention_type`, because
+[Section 2.9](#29-mention-and-reference-patterns) defines the mention as
+a shared *field pattern* rather than a table, and nothing requires four
+separate structures.
+
+- id
+- job_posting_id (FK → JobPosting)
+- mention_type — `required` / `preferred` / `mentioned` / `responsibility`
+- the [skill mention](#29-mention-and-reference-patterns) fields:
+  raw_text, normalized_representation, skill_id (absent when unresolved),
+  resolution_status, resolution_provenance, resolved_canonical_name
+  **by value**, catalog_version_at_resolution
+
+> **`UNIQUE (job_posting_id, mention_type, normalized_representation)`.**
+> Duplicate mentions collapse within a collection — multiplicity inside a
+> document is not evidence
+> ([Section 4.4](#44-data-quality-at-ingestion)). The scope includes
+> `mention_type` because a skill stated as *required* and also appearing
+> in prose is two different claims about that skill, not a duplicate of
+> one.
+
+> **`responsibility` mentions are evidence only.** They are stored and
+> resolved, but carry **no matching influence**. Whether responsibilities
+> may evidence a preference is deferred
+> ([AI-MATCHING.md Section 15](AI-MATCHING.md#15-explicitly-deferred)).
+> This is scoped to the skill axis: `responsibilities` already remains a
+> legitimate `evidence_source` for a seniority reference.
 
 > **All skill collections are positive-only.** There is no representation
 > for an explicit negative statement; negative-signal extraction is
-> deferred.
+> deferred. A mention's absence means "not mentioned", never "ruled out".
 
 > Resolution happens **at ingestion**, not match time. Catalog changes may
 > trigger re-resolution of these live mentions; that never alters an
@@ -934,8 +1069,22 @@ Catalog history is retained for interpretation, and a merge records a
   **identical resolution and no new state**.
 - **`ProfileVersion` minting is outcome-keyed**; a no-op sweep mints
   nothing, and concurrent triggers converge on one version.
-- Re-ingesting a `JobPosting` creates no duplicates (`source_job_id`,
-  `dedupe_key`).
+- Re-ingesting a `JobPosting` creates no duplicates, enforced by
+  `UNIQUE (dedupe_key)` on `JobPosting` plus
+  `UNIQUE (job_source_id, source_job_id)` on `JobPostingSource`.
+- **Each ingestion operation pins one catalog version** at the start, via
+  `CatalogSnapshot.current()`. Every mention in that operation resolves
+  against that version, and the version is persisted on each mention. A
+  promotion landing mid-run must not leave two mentions of one posting
+  disagreeing about the catalog they were resolved against.
+- **Deduplication is deterministic exact-key matching only.** Two
+  postings merge when their `dedupe_key` inputs normalize identically,
+  and not otherwise. Fuzzy, probabilistic and similarity-based
+  deduplication are **deferred**
+  ([Section 7](#7-explicitly-deferred)), so postings whose company,
+  title or location differ textually after normalization remain separate
+  canonical jobs even when a human would call them the same role. This
+  is a known and accepted limit of exact-key dedup, not a defect.
 - **Promotion is idempotent** — a second attempt converges on the existing
   entry via representation uniqueness.
 - **Promotion evidence counts independent postings**, enforced by
@@ -946,8 +1095,10 @@ Catalog history is retained for interpretation, and a merge records a
 - Empty, whitespace-only and malformed mentions are **rejected at
   ingestion** — extraction defects, not unresolved skills, and never
   entered into the promotion-evidence pool.
-- Duplicate mentions within one posting **collapse to one**. Multiplicity
-  within a document is not evidence.
+- Duplicate mentions **collapse to one** within
+  `(job_posting, mention_type, normalized_representation)`. Multiplicity
+  within a document is not evidence. The same skill appearing under two
+  different `mention_type`s is two distinct claims, not a duplicate.
 - Contradictory resolution candidates leave the mention **unresolved** and
   raise a conflict. Arbitrary tie-breaking is prohibited.
 - Stale catalog references in historical records are tolerated, because
@@ -974,6 +1125,11 @@ Catalog history is retained for interpretation, and a merge records a
 
 - A `ProfileSkill` may exist without a `MatchingCriteria`, and vice versa.
 - A `JobPosting` can have many `MatchResult`s over time.
+- A `JobPosting` has one `JobPostingSource` per source that lists it;
+  cross-source observations point at the **same** canonical `JobPosting`.
+- `SkillPromotionEvidence` keys on the canonical `JobPosting`, not on a
+  `JobPostingSource`, so one job found on three boards is one piece of
+  evidence.
 - A `ProfileVersion` can back many `MatchResult`s; each result references
   exactly one version, permanently.
 - `SkillPromotionEvidence` predates any `Skill`, so it keys on normalized
@@ -1024,6 +1180,14 @@ Matching-behaviour invariants live in
 25. Seniority uncertainty never produces a `SkillGap`.
 26. A `MatchResult` remains interpretable after its `JobPosting` is
     purged.
+27. `dedupe_key` and `fingerprint` are distinct, deterministic and
+    versioned; `dedupe_key` never depends on posting content.
+28. Cross-source observations of one job resolve to a single canonical
+    `JobPosting`.
+29. Every `JobSkillMention` records the catalog version it resolved
+    against, and all mentions of one ingestion operation record the same
+    one.
+30. `responsibility` mentions carry no matching influence.
 
 ## 7. Explicitly Deferred
 
@@ -1045,6 +1209,18 @@ Matching-behaviour invariants live in
 - Whether `target_seniority` may be a range.
 - How a `JobPosting` expresses a **required proficiency level**.
 - Whether per-skill experience is modelled separately.
+- **A parsed, comparable structure for `experience_requirements`** — the
+  unit, bounds, inclusivity, representation of open-ended ranges, and the
+  behaviour when the text does not parse. Until then the source wording
+  is stored verbatim and nothing is derived from it.
+- **Fuzzy, probabilistic or similarity-based deduplication.**
+  Deduplication is deterministic exact-key only
+  ([Section 4.3](#43-idempotency-requirements)).
+- Whether `JobPosting.first_seen_at` / `last_seen_at` are materialized
+  for query convenience rather than derived.
+- The delete/retention behaviour of `SkillPromotionEvidence` when its
+  `JobPosting` is purged, given that evidence counts independent
+  postings.
 - **Negative-signal extraction** and its `JobPosting` representation.
 - **Merge reversibility** and the conflict-adjudication workflow.
 - Whether `SkillPromotionEvidence` is immutable or compacted.

@@ -254,7 +254,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column("normalized_representation", sa.String(length=255), nullable=False),
         sa.Column("raw_text_observed", sa.String(length=255), nullable=False),
-        # No FK yet: JobPosting arrives in Milestone 5, which adds it.
+        # No FK yet: JobPosting arrives in Milestone 4, which adds it.
         sa.Column("job_posting_id", sa.Uuid(), nullable=False),
         sa.Column(
             "observed_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False

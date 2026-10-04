@@ -16,6 +16,11 @@ derived from these requirements live in [ARCHITECTURE.md](ARCHITECTURE.md),
 - Detect new postings and detect updates to previously discovered postings
   (e.g. description changed, requirements changed, posting closed).
 - Deduplicate jobs that appear across multiple sources or are re-posted.
+  Deduplication is currently **deterministic exact-key matching** on
+  normalized company, title and location; fuzzy and probabilistic
+  matching are deferred, so near-miss wordings across sources remain
+  separate jobs for now (see
+  [DATABASE.md Section 4.3](DATABASE.md#43-idempotency-requirements)).
 - Capture, per job, the following fields:
   - Company
   - Title

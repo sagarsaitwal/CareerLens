@@ -103,6 +103,15 @@ Two boundaries carry security weight and are detailed in
   verified direct application URL.
   - **Browser automation:** Playwright, only where permitted, and only to
     *read* publicly available posting data.
+  - **No live external source is integrated yet.** Which sources to
+    integrate first remains deferred
+    ([Section 8](#8-explicitly-deferred)) and any fetcher is bound by each
+    source's terms of service and `robots.txt`, so ingestion is currently
+    **fixture-driven**: postings are loaded from local files through the
+    same validated contract a fetcher would produce. Fixture content is
+    still untrusted input and is validated, not trusted. Swapping in a
+    real fetcher changes where the bytes come from and nothing about how
+    they are deduplicated or resolved.
 - **Resolution workers:** run the skill resolution cascade at ingestion,
   process re-resolution after catalog changes, and accumulate promotion
   evidence.
@@ -271,6 +280,10 @@ minimization. This boundary must be enforced explicitly, not assumed.
 - A **match run pins one catalog version at start** and uses it
   throughout. Mid-run drift would make results within a single run
   mutually incomparable.
+- An **ingestion operation likewise pins one catalog version at start**
+  and resolves every mention in that operation against it, persisting
+  that version per mention
+  ([DATABASE.md Section 4.3](DATABASE.md#43-idempotency-requirements)).
 - A match is computed against one pinned `ProfileVersion`.
 - All four version axes are recorded on the resulting `MatchResult`
   ([AI-MATCHING.md Section 11](AI-MATCHING.md#11-reproducibility--two-distinct-meanings)).

@@ -72,6 +72,15 @@ deterministic stages that follow, never a verdict**.
 Job text is **untrusted input** — see
 [Section 10](#10-ai-safety-and-bounded-behaviour).
 
+> **Stage 1 LLM extraction is deferred.** The provider, prompt design and
+> structured-output schema are all still open
+> ([Section 15](#15-explicitly-deferred)), so job ingestion currently
+> consumes mentions a source already presents in separated form and runs
+> **only the deterministic resolution cascade**. Nothing on the ingestion
+> path may call a model, and `ai_semantic` must therefore remain
+> unreachable until a milestone explicitly approves it. This is a
+> narrowing of what runs today, not a change to the pipeline's design.
+
 ### Stage 2 — Rule-Based Scoring
 
 Deterministic checks, **with no model calls**:
@@ -178,6 +187,14 @@ Matching reads persisted resolution; it never re-resolves. A catalog change
 may trigger re-resolution of **live** data only — it never alters
 historical records
 ([DATABASE.md Section 4.1](DATABASE.md#41-immutability-and-historical-denormalization)).
+
+**An ingestion operation pins one catalog version at its start** and
+resolves every mention in that operation against it, recording that
+version on each mention. This mirrors the per-match-run pin in
+[ARCHITECTURE.md Section 7.1](ARCHITECTURE.md#71-version-pinning), and
+for the same reason: a promotion landing mid-run would otherwise leave
+two mentions of one posting resolved against different catalogs and
+therefore not comparable.
 
 ### 3.1 Seniority resolution
 
