@@ -48,8 +48,11 @@ def source(**overrides: object) -> JobSource:
     return JobSource(**defaults)  # type: ignore[arg-type]
 
 
-def posting(**overrides: object) -> JobPosting:
+def posting(session: Session, **overrides: object) -> JobPosting:
+    """An unsaved posting whose owner source is persisted, so the NOT NULL
+    owner FK never masks the constraint a test is actually about."""
     defaults: dict[str, object] = {
+        "owner_job_source_id": persisted_source(session).id,
         "title": "Senior Platform Engineer",
         "company": "Example Industries",
         "dedupe_key": uuid.uuid4().hex,
@@ -74,7 +77,7 @@ def mention(job_posting_id: uuid.UUID, **overrides: object) -> JobSkillMention:
 
 
 def persisted_posting(session: Session, **overrides: object) -> JobPosting:
-    row = posting(**overrides)
+    row = posting(session, **overrides)
     session.add(row)
     session.flush()
     return row
@@ -162,7 +165,7 @@ def test_experience_requirements_is_unparsed_text(db_session: Session) -> None:
 def test_dedupe_key_is_unique(db_session: Session) -> None:
     key = uuid.uuid4().hex
     persisted_posting(db_session, dedupe_key=key)
-    db_session.add(posting(dedupe_key=key))
+    db_session.add(posting(db_session, dedupe_key=key))
     with pytest.raises(IntegrityError, match="uq_job_posting_dedupe_key"):
         db_session.flush()
 
@@ -176,19 +179,19 @@ def test_fingerprint_is_not_unique(db_session: Session) -> None:
 
 
 def test_posting_status_vocabulary_is_enforced(db_session: Session) -> None:
-    db_session.add(posting(status="expired"))
+    db_session.add(posting(db_session, status="expired"))
     with pytest.raises(IntegrityError, match="status_valid"):
         db_session.flush()
 
 
 def test_extraction_status_vocabulary_is_enforced(db_session: Session) -> None:
-    db_session.add(posting(extraction_status="none"))
+    db_session.add(posting(db_session, extraction_status="none"))
     with pytest.raises(IntegrityError, match="extraction_status_valid"):
         db_session.flush()
 
 
 def test_work_mode_vocabulary_is_enforced(db_session: Session) -> None:
-    db_session.add(posting(work_mode="hybrid-ish"))
+    db_session.add(posting(db_session, work_mode="hybrid-ish"))
     with pytest.raises(IntegrityError, match="work_mode_valid"):
         db_session.flush()
 
@@ -208,6 +211,7 @@ def test_verified_status_without_a_url_is_rejected(db_session: Session) -> None:
     """
     db_session.add(
         posting(
+            db_session,
             direct_apply_url=None,
             direct_apply_verification_status=(
                 DirectApplyVerificationStatus.VERIFIED.value
@@ -230,7 +234,7 @@ def test_absent_apply_url_is_a_legitimate_state(db_session: Session) -> None:
 
 
 def test_inverted_salary_range_is_rejected(db_session: Session) -> None:
-    db_session.add(posting(salary_min=200, salary_max=100))
+    db_session.add(posting(db_session, salary_min=200, salary_max=100))
     with pytest.raises(IntegrityError, match="salary_range_ordered"):
         db_session.flush()
 
@@ -246,6 +250,7 @@ def test_posting_seniority_resolved_without_identity_is_rejected(
 ) -> None:
     db_session.add(
         posting(
+            db_session,
             seniority_raw_text="Senior",
             seniority_normalized="senior",
             seniority_resolution_status=ResolutionStatus.RESOLVED.value,
@@ -564,7 +569,7 @@ def test_every_documented_employment_type_is_accepted(
 
 def test_employment_type_vocabulary_is_closed(db_session: Session) -> None:
     """An unrecognised source value must land on `unknown`, not a new member."""
-    db_session.add(posting(employment_type="permanent"))
+    db_session.add(posting(db_session, employment_type="permanent"))
     with pytest.raises(IntegrityError, match="employment_type_valid"):
         db_session.flush()
 
@@ -677,4 +682,43 @@ def test_promotion_evidence_fk_uses_restrict(migrated_engine: object) -> None:
         if key["referred_table"] == "job_posting"
     ]
     assert len(keys) == 1
+    assert keys[0]["options"].get("ondelete") == "RESTRICT"
+
+
+# --- 11. Canonical owner (0005) --------------------------------------------
+
+
+def test_posting_requires_an_owner_source(db_session: Session) -> None:
+    db_session.add(posting(db_session, owner_job_source_id=None))
+    with pytest.raises(IntegrityError, match="owner_job_source_id"):
+        db_session.flush()
+
+
+def test_owner_must_be_an_existing_source(db_session: Session) -> None:
+    db_session.add(posting(db_session, owner_job_source_id=uuid.uuid4()))
+    with pytest.raises(IntegrityError, match="fk_job_posting_owner_job_source_id_job_source"):
+        db_session.flush()
+
+
+@pytest.mark.invariant
+def test_owning_source_cannot_be_deleted(db_session: Session) -> None:
+    """RESTRICT: a source must not disappear from under a posting it owns."""
+    job = persisted_posting(db_session)
+    with pytest.raises(IntegrityError, match="fk_job_posting_owner_job_source_id_job_source"):
+        db_session.execute(
+            text("DELETE FROM job_source WHERE id = :id"), {"id": job.owner_job_source_id}
+        )
+
+
+def test_owner_fk_uses_restrict(migrated_engine: object) -> None:
+    inspector = inspect(migrated_engine)  # type: ignore[arg-type]
+    columns = {column["name"]: column for column in inspector.get_columns("job_posting")}
+    assert columns["owner_job_source_id"]["nullable"] is False
+    keys = [
+        key
+        for key in inspector.get_foreign_keys("job_posting")
+        if key["constrained_columns"] == ["owner_job_source_id"]
+    ]
+    assert len(keys) == 1
+    assert keys[0]["referred_table"] == "job_source"
     assert keys[0]["options"].get("ondelete") == "RESTRICT"

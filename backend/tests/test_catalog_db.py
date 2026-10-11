@@ -27,13 +27,14 @@ from app.models.catalog import (
 )
 from app.models.enums import (
     ConflictType,
+    JobSourceType,
     RepresentationKind,
     RepresentationOrigin,
     SeniorityTrack,
     SkillOrigin,
     SkillRelationshipType,
 )
-from app.models.job import JobPosting
+from app.models.job import JobPosting, JobSource
 from app.models.seniority import SeniorityLevel, SeniorityRelationship, SeniorityRepresentation
 from app.repositories.catalog import CatalogSnapshot, live_at
 from app.services.catalog import add_skill, open_conflict
@@ -240,7 +241,16 @@ def test_family_relationships_are_directional(db_session: Session) -> None:
 
 
 def _evidence_posting(db_session: Session) -> JobPosting:
+    # Every posting has an owning source since 0005.
+    owner = JobSource(
+        name=f"Evidence Board {uuid.uuid4().hex[:8]}",
+        base_url="https://example.test",
+        type=JobSourceType.JOB_BOARD.value,
+    )
+    db_session.add(owner)
+    db_session.flush()
     posting = JobPosting(
+        owner_job_source_id=owner.id,
         title="Evidence Fixture",
         company="Example Industries",
         dedupe_key=uuid.uuid4().hex,

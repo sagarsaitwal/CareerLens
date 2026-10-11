@@ -14,9 +14,9 @@ job may be discovered in several places, and that is what makes
 "deduplicated across sources" representable rather than merely
 asserted.
 
-This module defines schema only. Deriving `dedupe_key` and
-`fingerprint`, resolving mentions against the catalog, and ingestion
-itself all belong to later tasks.
+This module defines schema only. `dedupe_key` and `fingerprint` are
+derived in app/domain/jobs.py, and ingestion lives in
+app/services/job_ingestion.py.
 """
 
 import uuid
@@ -95,6 +95,13 @@ class JobPosting(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+
+    # The source that created this posting: the only one allowed to
+    # overwrite its content or replace its mentions. Set in the creating
+    # INSERT and never changed by ingestion (DATABASE.md Section 2.15).
+    owner_job_source_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("job_source.id", ondelete="RESTRICT"), nullable=False
     )
 
     # --- core identity --------------------------------------------------
