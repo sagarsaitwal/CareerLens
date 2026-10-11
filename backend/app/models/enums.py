@@ -151,3 +151,100 @@ class SeniorityRelationshipType(StrEnum):
     """
 
     CROSS_TRACK_BAND = "cross_track_band"
+
+
+class JobSourceType(StrEnum):
+    """What kind of origin a JobSource is (DATABASE.md Section 2.14)."""
+
+    JOB_BOARD = "job_board"
+    CAREER_PAGE = "career_page"
+    API = "api"
+
+
+class WorkMode(StrEnum):
+    """Where the work happens.
+
+    The same three values the profile side uses for
+    `preferred_work_modes`. Stage 2 compares the two directly, so they
+    are one vocabulary rather than two that happen to agree. There is
+    deliberately no `unknown` member: a posting that does not state a
+    work mode leaves the column NULL, which is an absence rather than a
+    stated value.
+    """
+
+    REMOTE = "remote"
+    HYBRID = "hybrid"
+    ONSITE = "onsite"
+
+
+class EmploymentType(StrEnum):
+    """Engagement form offered by a posting.
+
+    `UNKNOWN` is a real member, not a placeholder, because DATABASE.md
+    Section 2.15 requires an unrecognised source value to BECOME
+    `unknown` rather than be guessed into the nearest member. Coercion
+    would invent a fact the posting never stated.
+    """
+
+    FULL_TIME = "full_time"
+    PART_TIME = "part_time"
+    CONTRACT = "contract"
+    TEMPORARY = "temporary"
+    INTERNSHIP = "internship"
+    UNKNOWN = "unknown"
+
+
+class JobPostingStatus(StrEnum):
+    """Lifecycle state of a posting.
+
+    `UNKNOWN` is first-class: a source that stops listing a posting has
+    not said it closed, and recording `CLOSED` on that basis would
+    manufacture a fact.
+    """
+
+    ACTIVE = "active"
+    CLOSED = "closed"
+    UNKNOWN = "unknown"
+
+
+class ExtractionStatus(StrEnum):
+    """How complete requirement extraction was for a posting.
+
+    `PARTIAL` must never be read as "no further requirements exist"
+    (DATABASE.md Section 2.15). It separates "the posting asks for
+    nothing else" from "we did not finish looking".
+    """
+
+    COMPLETE = "complete"
+    PARTIAL = "partial"
+
+
+class DirectApplyVerificationStatus(StrEnum):
+    """Whether a direct application URL was verified.
+
+    A URL is never fabricated, so `NOT_AVAILABLE` and `UNVERIFIED` are
+    both legitimate terminal states and neither may be presented as a
+    usable link.
+    """
+
+    VERIFIED = "verified"
+    UNVERIFIED = "unverified"
+    NOT_AVAILABLE = "not_available"
+
+
+class JobMentionType(StrEnum):
+    """Which collection a job-side skill mention belongs to.
+
+    One table discriminated by this column, because Section 2.9 defines
+    the mention as a shared field pattern rather than a table.
+
+    `RESPONSIBILITY` is evidence only and carries no matching influence.
+    Whether responsibilities may evidence a preference is deferred, so
+    the category exists to retain the text without granting it weight
+    that has not been approved.
+    """
+
+    REQUIRED = "required"
+    PREFERRED = "preferred"
+    MENTIONED = "mentioned"
+    RESPONSIBILITY = "responsibility"
