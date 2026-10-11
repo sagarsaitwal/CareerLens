@@ -514,6 +514,16 @@ Unrelated profile metadata — a display label, cosmetic fields — must
 - is_active
 - last_crawled_at
 
+> **Fixture ingestion matches a source on exact `(name, base_url, type)`**,
+> creating one when none matches and refusing the whole operation when
+> more than one matches or the match is inactive. It never writes
+> `last_crawled_at`: a fixture run is not a crawl. **Known limitation:**
+> `(name, base_url, type)` carries no unique constraint (deferred), so
+> source creation is guarded only by the ingestion lock. If that lock
+> expires mid-operation, a concurrent operation can create a duplicate
+> source; later operations then see an ambiguous match and are refused
+> rather than guessing.
+
 ### 2.15 `JobPosting`
 
 Canonical, source-of-truth job information, deduplicated across sources.
@@ -525,6 +535,9 @@ one canonical job may be discovered in several places.
 
 **Core identity**
 - id, title, company
+- owner_job_source_id (FK → JobSource, `ON DELETE RESTRICT`) — the
+  source whose ingestion **created** this posting; see
+  [Ownership and re-observation](#ownership-and-re-observation)
 
 **Content**
 - description_raw — **untrusted external input** (see
@@ -544,7 +557,9 @@ one canonical job may be discovered in several places.
 - salary_min / salary_max / salary_currency (nullable)
 
 **Lifecycle**
-- posting_date, last_updated_at
+- posting_date
+- last_updated_at — **deferred**: not part of the ingestion contract, so
+  it stays NULL until a milestone defines where it comes from
 - first_seen_at / last_seen_at — **derived** from the associated
   `JobPostingSource` rows: earliest `first_seen_at` and latest
   `last_seen_at` across them. They are observations of a job, not
@@ -608,7 +623,8 @@ differently about.
 - seniority
 - experience_requirements
 - description_raw
-- official_url, direct_apply_url
+- official_url, direct_apply_url — **verbatim**, not normalized (see the
+  exception below)
 
 **Observation timestamps are excluded** from the fingerprint: they change
 on every crawl without the posting having changed, so including them
@@ -621,6 +637,69 @@ matching, which is the safe failure, rather than silently colliding.
 
 Normalization for both keys uses the same mechanical rules that govern
 skill identity, so one `rule_version` covers both.
+
+> **Exception — URLs are hashed exactly as supplied.** `official_url` and
+> `direct_apply_url` enter the fingerprint verbatim, never mechanically
+> normalized: case folding and punctuation replacement would erase
+> meaningful differences (case-sensitive paths and identifiers, `-` versus
+> `_`, a trailing slash), so a changed URL — including the verified
+> application link — could go undetected. An absent URL stays distinct
+> from an empty one. **URL canonicalization is deferred**; any future URL
+> policy is deterministic behaviour governed by `rule_version`, not a new
+> version axis.
+
+**Identity validation.** A company or title that normalizes to empty
+cannot identify a job: keying it would merge every such posting into one.
+Deriving a `dedupe_key` from one is rejected. Location may be absent;
+an absent location and a blank one remain distinct inputs and are never
+silently converted into each other. An empty, whitespace-only or
+normalization-empty location string is rejected at the ingestion
+validation boundary; `None` represents a missing location and is
+allowed.
+
+#### Ownership and re-observation
+
+**The source that creates a canonical posting owns it.** Ownership is set
+by the same `INSERT … ON CONFLICT (dedupe_key) DO NOTHING` that creates
+the posting and is never changed by ingestion, so it never depends on
+observation timestamps (which a caller supplies and an older fixture
+could backdate). When two sources race to create one job, the insert
+that wins makes its source the owner and the other attaches.
+
+- **Only the owner** may overwrite the posting's content — its
+  fingerprint fields and the seniority they imply, and its canonical
+  fields outside the fingerprint (salary, `posting_date`, `status`,
+  `extraction_status`) — or replace its mentions. Nothing is written when
+  nothing differs.
+- **Secondary sources are observations only.** They gain a
+  `JobPostingSource` row, but **their content and mentions are not
+  retained**: differences from the canonical record are reported by the
+  ingestion operation and not persisted anywhere.
+- **Mentions are replaced** (delete, then insert) only when the owner's
+  set of `(mention_type, normalized_representation)` differs from the
+  stored one or the pinned catalog version differs from the one stored.
+  `raw_text` is excluded from the comparison, so a spelling-only change
+  is not applied and the stored text keeps its first spelling. Likewise,
+  the owner's seniority is re-resolved when the pinned catalog version
+  advances past its stored `seniority_catalog_version`, even if the
+  posting fingerprint is unchanged.
+- **`direct_apply_verification_status` is re-derived only when
+  `direct_apply_url` changes**, so a later verification survives an
+  unrelated edit.
+- A known `(job_source_id, source_job_id)` whose incoming `dedupe_key`
+  differs is **rejected** as an identity change; one source supplying
+  several `source_job_id`s for one canonical job has **every** such
+  posting rejected.
+- Re-observation sets `last_seen_at = GREATEST(last_seen_at,
+  observed_at)`. `first_seen_at` is **never rewritten**, not even
+  backwards; an observation older than the stored `last_seen_at` is
+  reported as stale.
+- Each operation holds a Redis lock scoped to the source declaration
+  with a five-minute TTL. If the TTL expires mid-operation, the
+  `JobPostingSource` uniqueness constraints reject the conflicting
+  posting. If releasing the lock fails after a successful commit, the
+  caller sees an error although the data was written; re-running is
+  safe, because an identical re-ingest changes nothing but `last_seen_at`.
 
 #### 2.15.1 `JobPostingSource`
 
