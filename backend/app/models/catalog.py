@@ -269,10 +269,19 @@ class SkillPromotionEvidence(Base):
     )
     normalized_representation: Mapped[str] = mapped_column(String(255), nullable=False)
     raw_text_observed: Mapped[str] = mapped_column(String(255), nullable=False)
-    # No foreign key yet: JobPosting arrives in Milestone 4, which adds
-    # the constraint. The column and the uniqueness rule depending on it
-    # are needed now.
-    job_posting_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    # RESTRICT, never CASCADE. Promotion evidence is historical audit
+    # evidence that counts INDEPENDENT postings; cascading would let a
+    # posting deletion silently lower an evidence count and quietly
+    # un-promote a skill. Blocking the delete instead surfaces the
+    # question, which matters because the purge policy for JobPosting is
+    # explicitly deferred (DATABASE.md Sections 4.5 and 7). Whoever
+    # implements that policy must decide how evidence survives a purge;
+    # until then, failing loudly is the least destructive behaviour.
+    job_posting_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("job_posting.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
     observed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

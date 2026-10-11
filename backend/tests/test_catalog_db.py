@@ -33,6 +33,7 @@ from app.models.enums import (
     SkillOrigin,
     SkillRelationshipType,
 )
+from app.models.job import JobPosting
 from app.models.seniority import SeniorityLevel, SeniorityRelationship, SeniorityRepresentation
 from app.repositories.catalog import CatalogSnapshot, live_at
 from app.services.catalog import add_skill, open_conflict
@@ -230,21 +231,41 @@ def test_family_relationships_are_directional(db_session: Session) -> None:
 
 
 # --- promotion evidence ---------------------------------------------------
+#
+# `job_posting_id` became a real foreign key in 0004, so these tests use
+# genuine postings rather than arbitrary UUIDs. With a random id the
+# rows would now be rejected by the FK, and the tests asserting a
+# violation would pass for the wrong reason — proving nothing about the
+# constraint they name.
+
+
+def _evidence_posting(db_session: Session) -> JobPosting:
+    posting = JobPosting(
+        title="Evidence Fixture",
+        company="Example Industries",
+        dedupe_key=uuid.uuid4().hex,
+        fingerprint=uuid.uuid4().hex,
+    )
+    db_session.add(posting)
+    db_session.flush()
+    return posting
 
 
 @pytest.mark.invariant
 def test_promotion_evidence_counts_independent_postings(db_session: Session) -> None:
     """Invariant 17: re-ingesting one posting cannot inflate evidence."""
-    posting_id = uuid.uuid4()
+    posting = _evidence_posting(db_session)
     for _ in range(2):
         db_session.add(
             SkillPromotionEvidence(
                 normalized_representation="somenewtechnologyx",
                 raw_text_observed="SomeNewTechnologyX",
-                job_posting_id=posting_id,
+                job_posting_id=posting.id,
             )
         )
-    with pytest.raises(IntegrityError):
+    with pytest.raises(
+        IntegrityError, match="uq_skill_promotion_evidence_representation_posting"
+    ):
         db_session.flush()
 
 
@@ -254,7 +275,7 @@ def test_evidence_from_distinct_postings_accumulates(db_session: Session) -> Non
             SkillPromotionEvidence(
                 normalized_representation="somenewtechnologyx",
                 raw_text_observed="SomeNewTechnologyX",
-                job_posting_id=uuid.uuid4(),
+                job_posting_id=_evidence_posting(db_session).id,
             )
         )
     db_session.flush()
@@ -273,11 +294,11 @@ def test_extraction_confidence_is_bounded(db_session: Session) -> None:
         SkillPromotionEvidence(
             normalized_representation="x",
             raw_text_observed="X",
-            job_posting_id=uuid.uuid4(),
+            job_posting_id=_evidence_posting(db_session).id,
             extraction_confidence=1.5,
         )
     )
-    with pytest.raises(IntegrityError):
+    with pytest.raises(IntegrityError, match="extraction_confidence_range"):
         db_session.flush()
 
 
